@@ -93,14 +93,91 @@ struct ClipItem: Identifiable, Hashable {
         Color(hex: colorHex)
     }
 
-    var thumbnail: NSImage? {
-        if !thumbnailPath.isEmpty, let image = NSImage(contentsOfFile: thumbnailPath) {
+    var displayImage: NSImage? {
+        if !thumbnailPath.isEmpty, let image = NSImage(contentsOfFile: thumbnailPath), image.size.width > 0 {
             return image
         }
-        if !imagePath.isEmpty {
-            return NSImage(contentsOfFile: imagePath)
+        if !imagePath.isEmpty, let image = NSImage(contentsOfFile: imagePath), image.size.width > 0 {
+            return image
+        }
+        for path in filePaths where ClipImageStore.isImageFile(path) {
+            if let image = NSImage(contentsOfFile: path), image.size.width > 0 {
+                return image
+            }
         }
         return nil
+    }
+
+    var thumbnail: NSImage? { displayImage }
+}
+
+enum ClipImageStore {
+    static let extensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tif", "tiff", "bmp"
+    ]
+
+    static func isImageFile(_ path: String) -> Bool {
+        extensions.contains(URL(fileURLWithPath: path).pathExtension.lowercased())
+    }
+
+    static func pngData(from image: NSImage) -> Data? {
+        if let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            return png
+        }
+        var rect = NSRect(origin: .zero, size: image.size)
+        guard let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return nil }
+        return NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])
+    }
+
+    static func thumbnail(_ image: NSImage, maxPixel: CGFloat) -> NSImage? {
+        var rect = NSRect(origin: .zero, size: image.size)
+        guard let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return image }
+        let width = CGFloat(cg.width)
+        let height = CGFloat(cg.height)
+        guard width > 0, height > 0 else { return nil }
+        let scale = min(maxPixel / width, maxPixel / height, 1)
+        if scale >= 1 { return image }
+        let newW = max(1, Int(width * scale))
+        let newH = max(1, Int(height * scale))
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: newW,
+            pixelsHigh: newH,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSGraphicsContext.current?.imageInterpolation = .high
+        NSImage(cgImage: cg, size: NSSize(width: newW, height: newH))
+            .draw(in: NSRect(x: 0, y: 0, width: newW, height: newH))
+        NSGraphicsContext.restoreGraphicsState()
+        let result = NSImage(size: NSSize(width: newW, height: newH))
+        result.addRepresentation(rep)
+        return result
+    }
+
+    static func persist(_ image: NSImage, in folder: URL) -> (imagePath: String, thumbnailPath: String)? {
+        guard let png = pngData(from: image) else { return nil }
+        let imageURL = folder.appendingPathComponent("image.png")
+        do {
+            try png.write(to: imageURL)
+        } catch {
+            return nil
+        }
+        let thumbURL = folder.appendingPathComponent("thumb.png")
+        if let thumb = thumbnail(image, maxPixel: 720), let data = pngData(from: thumb) {
+            try? data.write(to: thumbURL)
+        }
+        let thumbPath = FileManager.default.fileExists(atPath: thumbURL.path) ? thumbURL.path : imageURL.path
+        return (imageURL.path, thumbPath)
     }
 }
 

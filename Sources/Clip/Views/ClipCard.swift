@@ -64,14 +64,22 @@ struct ClipCard: View {
     private var content: some View {
         switch item.kind {
         case .image:
-            if let image = item.thumbnail {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 8)
-            }
+            Color.black.opacity(0.18)
+                .overlay {
+                    if let image = item.displayImage {
+                        Image(nsImage: image)
+                            .resizable()
+                            .scaledToFit()
+                    } else {
+                        Image(systemName: "photo")
+                            .font(.system(size: 28, weight: .medium))
+                            .foregroundStyle(item.kind.accent)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
         case .color:
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)

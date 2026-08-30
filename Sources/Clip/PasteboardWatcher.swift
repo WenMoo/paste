@@ -124,9 +124,32 @@ final class PasteboardWatcher {
         let id = UUID().uuidString
         let folder = Paths.clipFolder(id)
 
+        if let image = firstImage(from: pasteboard), let paths = ClipImageStore.persist(image, in: folder) {
+            return makeImageItem(
+                id: id,
+                appName: appName,
+                bundleID: bundleID,
+                imagePath: paths.imagePath,
+                thumbnailPath: paths.thumbnailPath
+            )
+        }
+
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            !urls.isEmpty,
            urls.allSatisfy(\.isFileURL) {
+            if urls.allSatisfy({ ClipImageStore.isImageFile($0.path) }),
+               let first = urls.first,
+               let image = NSImage(contentsOf: first),
+               let paths = ClipImageStore.persist(image, in: folder) {
+                return makeImageItem(
+                    id: id,
+                    appName: appName,
+                    bundleID: bundleID,
+                    imagePath: paths.imagePath,
+                    thumbnailPath: paths.thumbnailPath,
+                    filePaths: urls.map(\.path)
+                )
+            }
             let names = urls.map(\.lastPathComponent).joined(separator: ", ")
             return ClipItem(
                 id: id,
@@ -155,41 +178,6 @@ final class PasteboardWatcher {
             }
             ?? ""
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if trimmed.isEmpty, let image = firstImage(from: pasteboard) {
-            let imageURL = folder.appendingPathComponent("image.png")
-            let thumbURL = folder.appendingPathComponent("thumb.png")
-            if let tiff = image.tiffRepresentation,
-               let rep = NSBitmapImageRep(data: tiff),
-               let png = rep.representation(using: .png, properties: [:]) {
-                try? png.write(to: imageURL)
-                if let thumb = thumbnail(image, max: 480),
-                   let tiff2 = thumb.tiffRepresentation,
-                   let rep2 = NSBitmapImageRep(data: tiff2),
-                   let png2 = rep2.representation(using: .png, properties: [:]) {
-                    try? png2.write(to: thumbURL)
-                }
-            }
-            return ClipItem(
-                id: id,
-                createdAt: Date(),
-                kind: .image,
-                title: appName.isEmpty ? L10n.image : appName,
-                text: "",
-                html: "",
-                url: "",
-                colorHex: "",
-                imagePath: imageURL.path,
-                thumbnailPath: FileManager.default.fileExists(atPath: thumbURL.path) ? thumbURL.path : imageURL.path,
-                filePaths: [],
-                sourceApp: appName,
-                sourceBundle: bundleID,
-                ocrText: "",
-                inHistory: true,
-                pinboardIDs: []
-            )
-        }
-
         guard !trimmed.isEmpty else { return nil }
 
         let kind = ClipCapture.classify(text: trimmed)
@@ -213,29 +201,65 @@ final class PasteboardWatcher {
         )
     }
 
+    private func makeImageItem(
+        id: String,
+        appName: String,
+        bundleID: String,
+        imagePath: String,
+        thumbnailPath: String,
+        filePaths: [String] = []
+    ) -> ClipItem {
+        ClipItem(
+            id: id,
+            createdAt: Date(),
+            kind: .image,
+            title: appName.isEmpty ? L10n.image : appName,
+            text: "",
+            html: "",
+            url: "",
+            colorHex: "",
+            imagePath: imagePath,
+            thumbnailPath: thumbnailPath,
+            filePaths: filePaths,
+            sourceApp: appName,
+            sourceBundle: bundleID,
+            ocrText: "",
+            inHistory: true,
+            pinboardIDs: []
+        )
+    }
+
     private func firstImage(from pasteboard: NSPasteboard) -> NSImage? {
-        if let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage],
-           let image = images.first {
-            return image
-        }
-        for type in [NSPasteboard.PasteboardType.png, .tiff, NSPasteboard.PasteboardType("com.adobe.pdf")] {
-            if let data = pasteboard.data(forType: type), let image = NSImage(data: data) {
+        let types: [NSPasteboard.PasteboardType] = [
+            .png,
+            .tiff,
+            NSPasteboard.PasteboardType("public.jpeg"),
+            NSPasteboard.PasteboardType("public.jpeg-2000"),
+            NSPasteboard.PasteboardType("public.gif"),
+            NSPasteboard.PasteboardType("public.heic"),
+            NSPasteboard.PasteboardType("public.heif"),
+        ]
+        for type in types {
+            if let data = pasteboard.data(forType: type),
+               let image = NSImage(data: data),
+               isSubstantial(image) {
                 return image
             }
+        }
+        if let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage],
+           let image = images.first,
+           isSubstantial(image) {
+            return image
         }
         return nil
     }
 
-    private func thumbnail(_ image: NSImage, max: CGFloat) -> NSImage? {
-        let size = image.size
-        guard size.width > 0, size.height > 0 else { return nil }
-        let scale = min(max / size.width, max / size.height, 1)
-        let target = NSSize(width: size.width * scale, height: size.height * scale)
-        let thumb = NSImage(size: target)
-        thumb.lockFocus()
-        image.draw(in: NSRect(origin: .zero, size: target), from: .zero, operation: .copy, fraction: 1)
-        thumb.unlockFocus()
-        return thumb
+    private func isSubstantial(_ image: NSImage) -> Bool {
+        var rect = NSRect(origin: .zero, size: image.size)
+        if let cg = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) {
+            return cg.width >= 32 && cg.height >= 32
+        }
+        return image.size.width >= 32 && image.size.height >= 32
     }
 
     private func recognizeText(in item: ClipItem) {

@@ -31,7 +31,7 @@ struct PreviewOverlay: View {
                 Group {
                     switch item.kind {
                     case .image:
-                        if let image = NSImage(contentsOfFile: item.imagePath.isEmpty ? item.thumbnailPath : item.imagePath) {
+                        if let image = item.displayImage {
                             Image(nsImage: image)
                                 .resizable()
                                 .scaledToFit()
