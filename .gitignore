@@ -1,0 +1,10 @@
+.build/
+dist/
+*.xcodeproj/xcuserdata/
+.DS_Store
+.swiftpm/
+*.app
+AppIcon.iconset/
+Resources/AppIcon.icns
+Resources/icon-1024.png
+Resources/verify-*.png
